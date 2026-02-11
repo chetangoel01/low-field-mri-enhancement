@@ -24,6 +24,8 @@ experiments/
 # OS
 .DS_Store
 
-# IDE
+# IDE / tools
 .vscode/
 .idea/
+.claude/
+CLAUDE.md
