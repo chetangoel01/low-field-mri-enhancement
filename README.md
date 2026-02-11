@@ -94,17 +94,18 @@ Slice-by-slice prediction with 4-way test-time augmentation (original + horizont
 .
 ├── model.py              # 2.5D U-Net architecture
 ├── losses.py             # Charbonnier L1 + Competition SSIM losses
-├── simple_dataset.py     # SliceMRIDataset with augmentation
+├── dataset.py            # SliceMRIDataset with augmentation
 ├── train.py              # Training loop (EMA, AMP, cosine LR, TensorBoard)
 ├── inference.py          # Inference with TTA, outputs submission CSV
+├── validate.py           # Local validation using competition metric
 ├── config.yaml           # All hyperparameters and paths
 ├── requirements.txt      # Python dependencies
 ├── extract_slices.py     # [Competition-provided] Slice encoding/decoding
 ├── metric.py             # [Competition-provided] SSIM + PSNR scoring
-├── sample_submission.csv # [Competition-provided] Bicubic baseline submission
 ├── hpc/                  # NYU HPC (Torch cluster) SLURM scripts
 │   ├── train_job.sbatch
-│   └── inference_job.sbatch
+│   ├── inference_job.sbatch
+│   └── validate_job.sbatch
 ├── audit/                # Experiment run logs and snapshots
 └── LITERATURE.md         # Domain background and reference approaches
 ```

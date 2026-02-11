@@ -1,10 +1,10 @@
 # MRI Super Resolution - 2.5D U-Net Configuration
 
 data:
-  train_lf_dir: "/scratch/cg4652/mri-super-resolution/train/low_field"
-  train_hf_dir: "/scratch/cg4652/mri-super-resolution/train/high_field"
-  test_lf_dir: "/scratch/cg4652/mri-super-resolution/test/low_field"
-  train_csv: "/scratch/cg4652/mri-super-resolution/train.csv"
+  train_lf_dir: "train/low_field"
+  train_hf_dir: "train/high_field"
+  test_lf_dir: "test/low_field"
+  train_csv: "train.csv"
   val_samples: []                      # use all 18 volumes for training
   num_slices: 200                      # axial slices per volume
   slice_context: 5                     # adjacent slices as input channels

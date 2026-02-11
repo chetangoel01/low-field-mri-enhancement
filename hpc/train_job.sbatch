@@ -20,7 +20,7 @@ set -e
 source /scratch/cg4652/miniconda3/etc/profile.d/conda.sh
 conda activate mri-sr
 
-cd /scratch/cg4652/mri-sr-v2
+cd "$SLURM_SUBMIT_DIR"
 
 # Create log directory
 mkdir -p logs
