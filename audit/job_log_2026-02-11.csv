@@ -1,0 +1,19 @@
+job_id,stage,experiment_or_purpose,state_or_issue,notes
+1901191,train,unet_pathA_seed11,FAILED,initial index/shape failure sequence
+1901192,train,unet_pathA_seed17,FAILED,initial index/shape failure sequence
+1901193,train,unet_pathA_seed23,FAILED,initial index/shape failure sequence
+1901198,inference,pathA ensemble,FAILED,checkpoint missing
+1901202,inference,pathA ensemble dependency,PENDING->DependencyNeverSatisfied,parents failed
+1901215,train,unet_pathA_seed11,submitted,from submit_patha_jobs.sh
+1901216,train,unet_pathA_seed17,submitted,from submit_patha_jobs.sh
+1901217,train,unet_pathA_seed23,submitted,from submit_patha_jobs.sh
+1901218,inference,pathA ensemble dependency,submitted,from submit_patha_jobs.sh
+1901229,train,unet_pathA_seed17,RUNNING at capture,HPC utilization warning message referenced this job
+1901230,train,unet_pathA_seed23,RUNNING at capture,
+1901231,inference,ensemble dependency,PENDING,DependencyNeverSatisfied chain
+1901734,inference,pathA ensemble,FAILED,missing output directory
+1901752,inference,pathA ensemble,rerun,produced CSV
+1908227,train,unet_realonly_patch_seed23,COMPLETED,early stopped epoch 27
+1908356,inference,unet_realonly_patch_ensemble3,COMPLETED,submission.csv created
+1908425,inference,seed17_only,FAILED,exit 127
+1908439,inference,seed17_only,FAILED,missing output directory

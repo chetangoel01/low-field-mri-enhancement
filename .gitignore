@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Data (NIfTI volumes, large CSVs)
+train/
+test/
+external_data/
+expanded_dataset/
+*.nii
+*.nii.gz
+
+# Large competition files
+train.csv
+sample_submission.csv
+submission.csv
+
+# Experiment outputs
+experiments/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

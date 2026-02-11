@@ -1,0 +1,3 @@
+# Reconstructed note
+# Original experiments manifest was deleted during cleanup.
+# Recreate by running: ls -lh experiments > audit/experiments_manifest.txt

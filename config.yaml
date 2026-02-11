@@ -1,0 +1,46 @@
+# MRI Super Resolution - 2.5D U-Net Configuration
+
+data:
+  train_lf_dir: "/scratch/cg4652/mri-super-resolution/train/low_field"
+  train_hf_dir: "/scratch/cg4652/mri-super-resolution/train/high_field"
+  test_lf_dir: "/scratch/cg4652/mri-super-resolution/test/low_field"
+  train_csv: "/scratch/cg4652/mri-super-resolution/train.csv"
+  val_samples: []                      # use all 18 volumes for training
+  num_slices: 200                      # axial slices per volume
+  slice_context: 5                     # adjacent slices as input channels
+  target_shape: [179, 221, 200]        # HF volume shape (trilinear upsample target)
+
+model:
+  base_features: 64                    # encoder start channels (64 generalized better than 96)
+  # Encoder: 64 -> 128 -> 256 -> 512, Bottleneck: 1024
+
+training:
+  epochs: 400
+  batch_size: 16
+  lr: 1.0e-3
+  min_lr: 1.0e-6
+  weight_decay: 1.0e-4
+  adam_betas: [0.9, 0.99]
+  lr_warmup_steps: 500
+  gradient_clip_norm: 1.0
+  use_amp: true
+  ema_decay: 0.999
+  num_workers: 4
+
+loss:
+  l1_weight: 1.0                       # Charbonnier L1
+  ssim_weight: 1.0                     # Competition SSIM
+
+augmentation:
+  crop_size: 160                       # random square crop (enables 90-deg rotation)
+  horizontal_flip: true
+  vertical_flip: true
+  rotation_90: true                    # 90/180/270 degree rotation (square crops only)
+  intensity_scale: [0.9, 1.1]
+  intensity_scale_prob: 0.5
+  gaussian_noise_std: 0.01
+  gaussian_noise_prob: 0.3
+
+inference:
+  tta: true                            # 4-way flip TTA
+  histogram_matching: false            # disabled - hurts score

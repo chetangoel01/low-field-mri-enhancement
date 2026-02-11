@@ -1,0 +1,3 @@
+# Reconstructed note
+# Original venv freeze file was deleted during cleanup.
+# Recreate by running: pip freeze > audit/pip_freeze_venv.txt
