@@ -70,7 +70,7 @@ def q_sample(x0, t, noise, schedule):
 # ---------------------------------------------------------------------------
 
 @torch.no_grad()
-def ddim_sample(model, lf_cond, schedule, n_steps, device, use_amp=True):
+def ddim_sample(model, lf_cond, schedule, n_steps, device, use_amp=True, seed=None):
     """Deterministic DDIM sampling (eta=0).
 
     Args:
@@ -80,6 +80,7 @@ def ddim_sample(model, lf_cond, schedule, n_steps, device, use_amp=True):
         n_steps:  number of DDIM denoising steps
         device:   torch device
         use_amp:  use autocast
+        seed:     if set, fix initial noise seed for reproducible validation
 
     Returns:
         (B, 1, H, W) predicted HF slice, clamped to [0, 1]
@@ -90,6 +91,8 @@ def ddim_sample(model, lf_cond, schedule, n_steps, device, use_amp=True):
     # Evenly-spaced timesteps from T-1 down to 0
     timesteps = torch.linspace(T - 1, 0, n_steps, dtype=torch.long, device=device)
 
+    if seed is not None:
+        torch.manual_seed(seed)
     x = torch.randn(B, 1, H, W, device=device)
 
     sqrt_acp   = schedule['sqrt_acp']
@@ -187,7 +190,7 @@ def validate_diffusion(model, val_loader, schedule, ddim_steps_val, device, use_
             inp = batch['input'].to(device)
             tgt = batch['target'].to(device)
 
-        pred = ddim_sample(model, inp, schedule, ddim_steps_val, device, use_amp)
+        pred = ddim_sample(model, inp, schedule, ddim_steps_val, device, use_amp, seed=42)
         total_msssim += compute_msssim_metric(pred, tgt)
         n_batches += 1
 

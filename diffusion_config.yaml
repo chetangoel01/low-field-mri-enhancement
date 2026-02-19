@@ -29,7 +29,7 @@ training:
   lr_warmup_steps: 500
   gradient_clip_norm: 1.0
   use_amp: true
-  ema_decay: 0.9999                # higher EMA than U-Net for smoother averaging
+  ema_decay: 0.999                 # 0.999 = ~1000-step lookback; 0.9999 was too slow (~10K steps)
   early_stopping_patience: 40
   num_workers: 4
 
