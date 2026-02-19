@@ -1,0 +1,41 @@
+# Conditional DDPM (SR3-style) Configuration
+# SR3: Image Super-Resolution via Iterative Refinement (Saharia et al. 2022)
+
+data:
+  train_lf_dir: "train/low_field"
+  train_hf_dir: "train/high_field"
+  test_lf_dir: "test/low_field"
+  val_samples: ["017", "018"]      # holdout for validation
+  num_slices: 200
+  slice_context: 5                 # 5 adjacent LF slices as conditioning
+  target_shape: [179, 221, 200]    # HF volume shape
+
+diffusion:
+  T: 1000                          # total diffusion timesteps
+  beta_start: 1.0e-4               # linear schedule start
+  beta_end: 0.02                   # linear schedule end
+  time_emb_dim: 256                # sinusoidal embedding + MLP output dim
+  base_features: 64                # U-Net encoder start channels
+  ddim_steps: 50                   # DDIM steps at final inference
+  ddim_steps_val: 20               # DDIM steps for fast validation sampling
+
+training:
+  epochs: 200
+  batch_size: 12
+  lr: 1.0e-4                       # lower LR than U-Net — diffusion more sensitive
+  min_lr: 1.0e-6
+  weight_decay: 1.0e-4
+  adam_betas: [0.9, 0.999]         # standard Adam betas for diffusion
+  lr_warmup_steps: 500
+  gradient_clip_norm: 1.0
+  use_amp: true
+  ema_decay: 0.9999                # higher EMA than U-Net for smoother averaging
+  early_stopping_patience: 40
+  num_workers: 4
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  intensity_scale: [0.9, 1.1]
+  intensity_scale_prob: 0.5
+  gaussian_noise_prob: 0.0         # skip — DDPM adds its own controlled noise
