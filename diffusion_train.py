@@ -367,7 +367,7 @@ def train(config, experiment_name, resume_path=None, device=None):
         if val_loader and (epoch % 5 == 0 or epoch == tcfg['epochs'] - 1):
             val_m = validate_diffusion(model, val_loader, schedule,
                                        dcfg['ddim_steps_val'], device, tcfg['use_amp'])
-            recalibrate_bn(ema_model, train_loader, device)
+            # GroupNorm has no running stats; no BN calibration needed
             ema_m = validate_diffusion(ema_model, val_loader, schedule,
                                        dcfg['ddim_steps_val'], device, tcfg['use_amp'])
 

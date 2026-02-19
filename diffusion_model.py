@@ -8,12 +8,25 @@ Time:   (B,) integer timestep in [0, T-1]
 Output: (B, 1, 179, 221) = predicted noise epsilon
 
 No residual connection to input — this network predicts noise, not enhancement.
+
+Uses GroupNorm instead of BatchNorm: each training batch mixes samples at
+wildly different noise levels (t=3 is near-clean, t=997 is near-Gaussian),
+so BatchNorm's batch statistics are meaningless. GroupNorm normalizes within
+each sample independently, which is stable across all timesteps.
 """
 
 import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+def _gn(channels):
+    """GroupNorm with up to 32 groups (fewer when channels < 32)."""
+    groups = 32
+    while channels % groups != 0:
+        groups //= 2
+    return nn.GroupNorm(groups, channels)
 
 
 class SinusoidalTimeEmbedding(nn.Module):
@@ -47,28 +60,32 @@ class SinusoidalTimeEmbedding(nn.Module):
 
 
 class TimeCondBlock(nn.Module):
-    """Two Conv2d(3x3) + BN + ReLU with additive time-step conditioning.
+    """Two Conv2d(3x3) + GroupNorm + SiLU with additive time-step conditioning.
+
+    GroupNorm is per-sample, so statistics are stable regardless of what
+    timestep each sample in the batch is at. SiLU (Swish) is standard in
+    DDPM architectures (smoother gradients than ReLU).
 
     The time embedding is projected to (out_ch,) and broadcast-added to
-    the feature map after the first conv pair. This lets the network
-    attend to different noise levels at each spatial location.
+    the feature map after the first conv, letting the network condition on
+    how much noise is present before applying the second conv.
     """
 
     def __init__(self, in_ch, out_ch, time_emb_dim):
         super().__init__()
-        # First conv pair
+        # First conv + GroupNorm + SiLU
         self.conv1 = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch),
-            nn.ReLU(inplace=True),
+            nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=True),
+            _gn(out_ch),
+            nn.SiLU(),
         )
         # Time projection: (B, time_emb_dim) → (B, out_ch)
         self.time_proj = nn.Linear(time_emb_dim, out_ch)
-        # Second conv pair
+        # Second conv + GroupNorm + SiLU
         self.conv2 = nn.Sequential(
-            nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
-            nn.BatchNorm2d(out_ch),
-            nn.ReLU(inplace=True),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=True),
+            _gn(out_ch),
+            nn.SiLU(),
         )
 
     def forward(self, x, t_emb):
@@ -133,7 +150,7 @@ class DiffusionUNet(nn.Module):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
-            elif isinstance(m, nn.BatchNorm2d):
+            elif isinstance(m, nn.GroupNorm):
                 nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
             elif isinstance(m, nn.Linear):
