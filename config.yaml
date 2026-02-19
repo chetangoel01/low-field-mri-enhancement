@@ -5,7 +5,7 @@ data:
   train_hf_dir: "train/high_field"
   test_lf_dir: "test/low_field"
   train_csv: "train.csv"
-  val_samples: []                      # use all 18 volumes for training
+  val_samples: ["017", "018"]           # holdout for early stopping
   num_slices: 200                      # axial slices per volume
   slice_context: 5                     # adjacent slices as input channels
   target_shape: [179, 221, 200]        # HF volume shape (trilinear upsample target)
@@ -16,7 +16,7 @@ model:
 
 training:
   epochs: 400
-  batch_size: 16
+  batch_size: 12
   lr: 1.0e-3
   min_lr: 1.0e-6
   weight_decay: 1.0e-4
@@ -25,17 +25,18 @@ training:
   gradient_clip_norm: 1.0
   use_amp: true
   ema_decay: 0.999
+  early_stopping_patience: 50           # stop if val MS-SSIM doesn't improve for N epochs
   num_workers: 4
 
 loss:
-  l1_weight: 1.0                       # Charbonnier L1
-  ssim_weight: 1.0                     # Competition SSIM
+  l1_weight: 0.16                      # Charbonnier L1 (Zhao et al. 2018)
+  msssim_weight: 0.84                  # MS-SSIM loss (Phase 2 metric)
 
 augmentation:
-  crop_size: 160                       # random square crop (enables 90-deg rotation)
+  crop_size: null                      # full-slice (179x221) required for 5-scale MS-SSIM
   horizontal_flip: true
   vertical_flip: true
-  rotation_90: true                    # 90/180/270 degree rotation (square crops only)
+  rotation_90: false                   # disabled — non-square slices (179x221)
   intensity_scale: [0.9, 1.1]
   intensity_scale_prob: 0.5
   gaussian_noise_std: 0.01

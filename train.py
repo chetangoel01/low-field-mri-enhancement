@@ -1,7 +1,7 @@
 """Training script for 2.5D U-Net MRI Super Resolution.
 
 Features: EMA, AMP, cosine LR with warmup, gradient clipping, TensorBoard.
-Single-phase training (no GAN). Optimizes Charbonnier L1 + Competition SSIM.
+Single-phase training (no GAN). Optimizes Charbonnier L1 + MS-SSIM (Phase 2).
 
 Usage:
     python train.py --config config.yaml --experiment unet_v1
@@ -23,7 +23,7 @@ from torch.utils.tensorboard import SummaryWriter
 import yaml
 
 from model import UNet2D
-from losses import CharbonnierLoss, CompetitionSSIMLoss
+from losses import CharbonnierLoss, MSSSIMLoss
 from dataset import SliceMRIDataset
 
 
@@ -36,94 +36,78 @@ def get_cosine_lr(step, total_steps, warmup_steps, base_lr, min_lr):
 
 
 def update_ema(ema_model, model, decay):
-    """Update EMA model parameters."""
+    """Update EMA model parameters (buffers copied separately via recalibrate_bn)."""
     with torch.no_grad():
         for ema_p, p in zip(ema_model.parameters(), model.parameters()):
             ema_p.data.mul_(decay).add_(p.data, alpha=1 - decay)
 
 
-def compute_competition_metrics(pred, target):
-    """Compute SSIM and PSNR matching metric.py exactly (per-slice, on [0,1] data)."""
-    # pred, target: (B, 1, H, W) tensors in [0, 1]
-    b = pred.shape[0]
-    ssim_vals = []
-    psnr_vals = []
-
-    C1 = 0.01 ** 2
-    C2 = 0.03 ** 2
-
-    for i in range(b):
-        p = pred[i, 0].detach().cpu().numpy()
-        t = target[i, 0].detach().cpu().numpy()
-
-        # Per-slice normalize (matching metric.py)
-        def normalize(x):
-            x_min, x_max = x.min(), x.max()
-            if x_max - x_min > 0:
-                return (x - x_min) / (x_max - x_min)
-            return np.zeros_like(x)
-
-        p_n = normalize(p)
-        t_n = normalize(t)
-
-        # SSIM
-        mu_p, mu_t = p_n.mean(), t_n.mean()
-        sig_p = ((p_n - mu_p) ** 2).mean()
-        sig_t = ((t_n - mu_t) ** 2).mean()
-        sig_pt = ((p_n - mu_p) * (t_n - mu_t)).mean()
-        ssim = float(((2 * mu_p * mu_t + C1) * (2 * sig_pt + C2)) /
-                      ((mu_p**2 + mu_t**2 + C1) * (sig_p + sig_t + C2)))
-        ssim_vals.append(ssim)
-
-        # PSNR
-        mse = ((p_n - t_n) ** 2).mean()
-        if mse == 0:
-            psnr_vals.append(50.0)
+@torch.no_grad()
+def recalibrate_bn(model, data_loader, device):
+    """Recalculate BatchNorm running stats for EMA model by running a forward pass."""
+    was_training = model.training
+    model.train()
+    for module in model.modules():
+        if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
+            module.running_mean.zero_()
+            module.running_var.fill_(1)
+            module.num_batches_tracked.zero_()
+    for batch in data_loader:
+        if isinstance(batch, (list, tuple)):
+            inp = batch[0].to(device)
         else:
-            psnr = float(10 * np.log10(1.0 / mse))
-            psnr_vals.append(min(max(psnr, 0), 50))
-
-    mean_ssim = np.mean(ssim_vals)
-    mean_psnr = np.mean(psnr_vals)
-    score = 0.5 * mean_ssim + 0.5 * (mean_psnr / 50)
-    return mean_ssim, mean_psnr, score
+            inp = batch['input'].to(device)
+        model(inp)
+    if not was_training:
+        model.eval()
 
 
-def validate(model, val_loader, l1_loss_fn, ssim_loss_fn, device, config):
+def compute_msssim_metric(pred, target):
+    """Compute MS-SSIM matching phase_2/metric.py (GPU-accelerated via pytorch_msssim)."""
+    from pytorch_msssim import ms_ssim
+    with torch.no_grad():
+        val = ms_ssim(
+            pred, target,
+            data_range=1.0,
+            size_average=True,
+            win_size=11,
+            win_sigma=1.5,
+            weights=[0.0448, 0.2856, 0.3001, 0.2363, 0.1333],
+            K=(0.01, 0.03),
+        )
+        val = torch.nan_to_num(val, nan=0.0)
+        return val.clamp(0.0, 1.0).item()
+
+
+def validate(model, val_loader, l1_loss_fn, msssim_loss_fn, device, config):
     """Run validation and return metrics."""
     model.eval()
     total_l1 = 0.0
-    total_ssim_loss = 0.0
-    total_ssim = 0.0
-    total_psnr = 0.0
-    total_score = 0.0
+    total_msssim_loss = 0.0
+    total_msssim = 0.0
     n_batches = 0
 
     with torch.no_grad():
-        for inp, tgt in val_loader:
-            inp, tgt = inp.to(device), tgt.to(device)
+        for batch in val_loader:
+            if isinstance(batch, (list, tuple)):
+                inp, tgt = batch[0].to(device), batch[1].to(device)
+            else:
+                inp, tgt = batch['input'].to(device), batch['target'].to(device)
             with autocast(enabled=config['training']['use_amp']):
                 pred = model(inp)
                 l1 = l1_loss_fn(pred, tgt)
-                ssim_l = ssim_loss_fn(pred, tgt)
+                msssim_l = msssim_loss_fn(pred, tgt)
 
             total_l1 += l1.item()
-            total_ssim_loss += ssim_l.item()
-
-            # Competition metrics
-            ssim, psnr, score = compute_competition_metrics(pred, tgt)
-            total_ssim += ssim
-            total_psnr += psnr
-            total_score += score
+            total_msssim_loss += msssim_l.item()
+            total_msssim += compute_msssim_metric(pred, tgt)
             n_batches += 1
 
     n = max(n_batches, 1)
     return {
         'l1': total_l1 / n,
-        'ssim_loss': total_ssim_loss / n,
-        'ssim': total_ssim / n,
-        'psnr': total_psnr / n,
-        'score': total_score / n,
+        'msssim_loss': total_msssim_loss / n,
+        'msssim': total_msssim / n,
     }
 
 
@@ -183,7 +167,7 @@ def train(config, experiment_name, resume_path=None, device=None):
     # Losses
     lcfg = config['loss']
     l1_loss_fn = CharbonnierLoss().to(device)
-    ssim_loss_fn = CompetitionSSIMLoss().to(device)
+    msssim_loss_fn = MSSSIMLoss().to(device)
 
     # Optimizer
     optimizer = torch.optim.AdamW(
@@ -203,6 +187,8 @@ def train(config, experiment_name, resume_path=None, device=None):
     start_epoch = 0
     global_step = 0
     best_score = 0.0
+    epochs_without_improvement = 0
+    patience = tcfg.get('early_stopping_patience', 0)
     total_steps = tcfg['epochs'] * len(train_loader)
 
     # Resume
@@ -228,17 +214,21 @@ def train(config, experiment_name, resume_path=None, device=None):
         log_file.flush()
 
     log(f"Training {experiment_name}: {tcfg['epochs']} epochs, lr={tcfg['lr']}, bs={tcfg['batch_size']}")
-    log(f"Loss weights: L1={lcfg['l1_weight']}, SSIM={lcfg['ssim_weight']}")
+    log(f"Loss weights: L1={lcfg['l1_weight']}, MS-SSIM={lcfg['msssim_weight']}")
 
     for epoch in range(start_epoch, tcfg['epochs']):
         model.train()
         epoch_l1 = 0.0
-        epoch_ssim = 0.0
+        epoch_msssim = 0.0
         epoch_loss = 0.0
         t0 = time.time()
 
-        for batch_idx, (inp, tgt) in enumerate(train_loader):
-            inp, tgt = inp.to(device, non_blocking=True), tgt.to(device, non_blocking=True)
+        for batch_idx, batch in enumerate(train_loader):
+            if isinstance(batch, (list, tuple)):
+                inp, tgt = batch[0].to(device, non_blocking=True), batch[1].to(device, non_blocking=True)
+            else:
+                inp = batch['input'].to(device, non_blocking=True)
+                tgt = batch['target'].to(device, non_blocking=True)
 
             # LR schedule
             lr = get_cosine_lr(global_step, total_steps, tcfg['lr_warmup_steps'],
@@ -250,8 +240,15 @@ def train(config, experiment_name, resume_path=None, device=None):
             with autocast(enabled=tcfg['use_amp']):
                 pred = model(inp)
                 l1 = l1_loss_fn(pred, tgt)
-                ssim_l = ssim_loss_fn(pred, tgt)
-                loss = lcfg['l1_weight'] * l1 + lcfg['ssim_weight'] * ssim_l
+                msssim_l = msssim_loss_fn(pred, tgt)
+                loss = lcfg['l1_weight'] * l1 + lcfg['msssim_weight'] * msssim_l
+
+            # Skip NaN batches (AMP can produce NaN in forward pass)
+            if not torch.isfinite(loss):
+                optimizer.zero_grad(set_to_none=True)
+                scaler.update()
+                global_step += 1
+                continue
 
             # Backward
             optimizer.zero_grad(set_to_none=True)
@@ -266,44 +263,42 @@ def train(config, experiment_name, resume_path=None, device=None):
 
             # Logging
             epoch_l1 += l1.item()
-            epoch_ssim += ssim_l.item()
+            epoch_msssim += msssim_l.item()
             epoch_loss += loss.item()
             global_step += 1
 
             if global_step % 50 == 0:
                 writer.add_scalar('train/loss', loss.item(), global_step)
                 writer.add_scalar('train/l1', l1.item(), global_step)
-                writer.add_scalar('train/ssim_loss', ssim_l.item(), global_step)
+                writer.add_scalar('train/msssim_loss', msssim_l.item(), global_step)
                 writer.add_scalar('train/lr', lr, global_step)
 
         # Epoch stats
         n = len(train_loader)
         elapsed = time.time() - t0
         log(f"Epoch {epoch:03d} | loss={epoch_loss/n:.4f} l1={epoch_l1/n:.4f} "
-            f"ssim_loss={epoch_ssim/n:.4f} | lr={lr:.2e} | {elapsed:.0f}s")
+            f"msssim_loss={epoch_msssim/n:.4f} | lr={lr:.2e} | {elapsed:.0f}s")
 
         # Validation (every 5 epochs or last epoch)
         if val_loader and (epoch % 5 == 0 or epoch == tcfg['epochs'] - 1):
-            val_metrics = validate(model, val_loader, l1_loss_fn, ssim_loss_fn, device, config)
-            ema_metrics = validate(ema_model, val_loader, l1_loss_fn, ssim_loss_fn, device, config)
+            val_metrics = validate(model, val_loader, l1_loss_fn, msssim_loss_fn, device, config)
+            recalibrate_bn(ema_model, train_loader, device)
+            ema_metrics = validate(ema_model, val_loader, l1_loss_fn, msssim_loss_fn, device, config)
 
-            log(f"  Val (model): SSIM={val_metrics['ssim']:.4f} PSNR={val_metrics['psnr']:.2f} "
-                f"Score={val_metrics['score']:.4f}")
-            log(f"  Val (EMA):   SSIM={ema_metrics['ssim']:.4f} PSNR={ema_metrics['psnr']:.2f} "
-                f"Score={ema_metrics['score']:.4f}")
+            log(f"  Val (model): MS-SSIM={val_metrics['msssim']:.4f} l1={val_metrics['l1']:.4f}")
+            log(f"  Val (EMA):   MS-SSIM={ema_metrics['msssim']:.4f} l1={ema_metrics['l1']:.4f}")
 
-            current_score = max(val_metrics['score'], ema_metrics['score'])
+            current_score = max(val_metrics['msssim'], ema_metrics['msssim'])
 
-            writer.add_scalar('val/ssim', val_metrics['ssim'], epoch)
-            writer.add_scalar('val/psnr', val_metrics['psnr'], epoch)
-            writer.add_scalar('val/score', val_metrics['score'], epoch)
-            writer.add_scalar('val_ema/ssim', ema_metrics['ssim'], epoch)
-            writer.add_scalar('val_ema/psnr', ema_metrics['psnr'], epoch)
-            writer.add_scalar('val_ema/score', ema_metrics['score'], epoch)
+            writer.add_scalar('val/msssim', val_metrics['msssim'], epoch)
+            writer.add_scalar('val/l1', val_metrics['l1'], epoch)
+            writer.add_scalar('val_ema/msssim', ema_metrics['msssim'], epoch)
+            writer.add_scalar('val_ema/l1', ema_metrics['l1'], epoch)
 
             if current_score > best_score:
                 best_score = current_score
-                best_is_ema = ema_metrics['score'] >= val_metrics['score']
+                epochs_without_improvement = 0
+                best_is_ema = ema_metrics['msssim'] >= val_metrics['msssim']
                 best_state = ema_model.state_dict() if best_is_ema else model.state_dict()
                 torch.save({
                     'model': best_state,
@@ -312,7 +307,13 @@ def train(config, experiment_name, resume_path=None, device=None):
                     'is_ema': best_is_ema,
                     'config': config,
                 }, os.path.join(ckpt_dir, 'best_model.pth'))
-                log(f"  ** New best score: {best_score:.4f} ({'EMA' if best_is_ema else 'model'}) **")
+                log(f"  ** New best MS-SSIM: {best_score:.4f} ({'EMA' if best_is_ema else 'model'}) **")
+            else:
+                epochs_without_improvement += 5  # validated every 5 epochs
+
+            if patience > 0 and epochs_without_improvement >= patience:
+                log(f"  Early stopping: no improvement for {epochs_without_improvement} epochs")
+                break
 
         # Save checkpoint every 10 epochs
         if epoch % 10 == 0 or epoch == tcfg['epochs'] - 1:
@@ -338,7 +339,7 @@ def train(config, experiment_name, resume_path=None, device=None):
             }, os.path.join(ckpt_dir, 'best_model.pth'))
             log("  Saved final model as best_model.pth (no validation)")
 
-    log(f"\nTraining complete. Best score: {best_score:.4f}")
+    log(f"\nTraining complete. Best MS-SSIM: {best_score:.4f}")
     writer.close()
     log_file.close()
 
