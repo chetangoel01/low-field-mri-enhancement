@@ -537,3 +537,147 @@ print(f"Score: {result}")
 ---
 
 *This document consolidates the complete project PDF, Kaggle competition page, dataset description, metric implementation, lecture materials (Lectures 1 & 2), and all strategic insights from experimentation. It is intended to be a self-contained reference for any coding agent working on this project.*
+
+---
+
+## 15. Training History & Experiment Log
+
+### Phase 1 — Competition Metric: `0.5×SSIM + 0.5×(PSNR/50)`
+
+#### 3D ESRGAN (First Attempt)
+- Architecture: 3D RRDB generator (lite variant, 8 blocks), 3D relativistic PatchGAN discriminator
+- Training: 3-phase curriculum (pretrain → GAN → finetune), batch size 2, 64³ patches
+- Result: Estimated score ~0.373, **below bicubic baseline (0.456)**
+- Lesson: GAN training with only 18 volumes is unstable; 3D conv parameter count overwhelms the dataset
+
+#### 2.5D U-Net (Feb 11 batch, Phase 1)
+Multi-seed runs with expanded slice dataset, curriculum sampler, and ensemble inference. All on Torch HPC.
+
+| Run | Notes | Leaderboard Score |
+|-----|-------|-------------------|
+| Path A ensemble | 3-seed ensemble (seeds 11, 17, 23), weighted 0.4/0.6 | 0.4478 |
+| seed23 real-only | Early stopping triggered | — |
+| seed11 real-only | Best single model | **0.4525** |
+| 2-model ensemble 0.4/0.6 | seeds 11+17 | 0.4438 |
+
+**Best Phase 1 result: 0.4525** (single U-Net, `unet_realonly_patch_seed11`). Ensembles did not improve over the single best model.
+
+Key failures during this batch (see `audit/RUN_LOG_2026-02-11.md` for full SLURM job IDs):
+- z-index OOB when LF/HF volumes had different z-depths — fixed with clamp
+- Shape mismatch in loss when HF target shape didn't match model output — fixed with resample
+- `DependencyNeverSatisfied` SLURM errors from failed upstream jobs
+- SLURM `--wrap` corruption when pasting markdown-formatted commands
+
+---
+
+### Phase 2 — Metric Changed to MS-SSIM
+
+**Leaderboard context (discovered Feb 2026):**
+- Competition moved from `0.5×SSIM + 0.5×PSNR/50` to pure **MS-SSIM** (5-scale, 11×11 Gaussian windows, σ=1.5, Wang et al. 2003 weights)
+- Bicubic baseline: **0.5130** (higher than Phase 1 ~0.456 due to metric change)
+- SOTA reference on leaderboard: `sota_diffusion.csv` = **0.6399**
+- Our Phase 1 best (0.4525) was on the old metric and below the new baseline
+
+**Why U-Net falls short for MS-SSIM:** A regression model minimizes expected loss, which averages over the conditional distribution `p(HF|LF)`. This regresses toward the mean → blurry outputs → low MS-SSIM at fine scales (scales 4–5 of the 5-scale pyramid are most sensitive to sharpness). MS-SSIM penalizes blur far more than PSNR does.
+
+**Phase 2 U-Net update (git: `8f8b416`):**
+- `losses.py`: Added `MSSSIMLoss` using `pytorch_msssim`
+- `config.yaml`: Added `msssim_weight: 0.84`, reduced `ssim_weight`
+- `metric.py`: Updated to compute MS-SSIM
+- `simple_dataset.py`: Minor dataset improvements
+
+---
+
+### Conditional DDPM — SR3-Style (Phase 2 Primary Strategy)
+
+**Rationale:** Diffusion models learn the full conditional distribution `p(HF|LF)` rather than the conditional mean. Samples are sharp, perceptually realistic, and maximize MS-SSIM across all 5 scales. SR3 (Saharia et al. 2022) concatenates the upsampled LR image with the noisy HR at each denoising step — a direct fit for this task.
+
+**Architecture (`diffusion_model.py`):**
+- Input: `(B, 6, H, W)` = concat([noisy HF (1ch), 5 adjacent upsampled LF slices])
+- Time conditioning: sinusoidal embedding (dim=256) → 2-layer MLP → per-channel additive shift in each `TimeCondBlock`
+- U-Net: 4-level encoder (64→128→256→512), bottleneck (1024), decoder with bilinear upsample + skip concat
+- Output: `(B, 1, H, W)` predicted noise ε — no residual to input, no output clamping
+- Normalization: **GroupNorm** (not BatchNorm — see v1 bug below)
+- ~32.7M parameters, 18 GroupNorm layers
+
+**Training objective:** `loss = MSE(ε_pred, ε)` where `ε ~ N(0,I)` and `x_t = √ᾱ_t · x₀ + √(1−ᾱ_t) · ε`
+
+**DDIM inference:** Deterministic η=0 sampler, 50 steps (down from T=1000). 4-way TTA on LF conditioning (h-flip, v-flip, both, average predictions).
+
+---
+
+#### diffusion_v1 — Initial Run (FAILED — BatchNorm bug)
+
+- Commit: `efd168e`
+- Config: ema_decay=0.9999, batch_size=12, epochs=200
+- Symptom: `Val (model) MS-SSIM ≈ 0.40–0.43` (below bicubic baseline), `Val (EMA) MS-SSIM = 0.0000` every epoch
+
+**Root cause 1 — BatchNorm incompatible with DDPM:**
+Each training batch mixes samples at wildly different timesteps (t=3 is near-clean, t=997 is near-Gaussian). BatchNorm's running mean/variance becomes a meaningless mixture of all noise levels. At inference (where the model is called at t=999, 900, 800...), the stats are wrong → corrupted outputs.
+
+**Root cause 2 — `recalibrate_bn` worsened EMA:**
+The `recalibrate_bn` function was called on the EMA model with `t_dummy = torch.zeros(...)` (only t=0, near-clean). This calibrated the EMA model's BN stats purely for the clean-image regime. DDIM then called it at high t → stats completely wrong → output ≈ garbage → MS-SSIM = 0.0000.
+
+**Fix (commit `d36ef3d`):**
+- Replaced all `nn.BatchNorm2d` with `_gn(out_ch)` (GroupNorm, ≤32 groups, per-sample normalization)
+- Replaced `nn.ReLU` with `nn.SiLU` (standard in DDPM architectures — smoother gradients)
+- Added `bias=True` to all `Conv2d` (no BN means bias is no longer redundant)
+- Removed `recalibrate_bn` call from validation loop entirely
+- Retrained from scratch as `diffusion_v2`
+
+---
+
+#### diffusion_v2 — GroupNorm fixed (partial progress)
+
+- Started after `d36ef3d` commit
+- Training loss steadily decreasing: `0.0106 → 0.0085` (epochs 27–70) ✓
+- `Val (EMA)` rising monotonically: `0.038 → 0.140 → 0.247` ✓ (model IS learning)
+- `Val (model)` oscillating: `0.44 → 0.46 → 0.44 → 0.46 → 0.41 → 0.48 → 0.49 → 0.37`
+- Best checkpoint: epoch 60, MS-SSIM = **0.4911** (model head)
+
+Two remaining issues identified:
+
+**Issue 1 — Stochastic validation noise:**
+`ddim_sample` calls `torch.randn(B, 1, H, W)` to initialize the denoising chain. Different random seeds each validation call produce up to ±0.12 MS-SSIM swings with only 20 DDIM steps. The oscillation is measurement noise, not training instability.
+
+**Issue 2 — EMA half-life too long:**
+At `ema_decay=0.9999`, the effective lookback is `1/(1−0.9999) ≈ 10,000 steps`. With ~260 steps/epoch, the EMA needs ~38 epochs to be 50% current. At epoch 70, the EMA is heavily weighted toward the randomly-initialized model from epoch 1–10, explaining the slow rise from 0.038.
+
+---
+
+#### diffusion_v3 — Current run (fixes applied, commit `d3bab3f`)
+
+Fixes:
+1. `ddim_sample`: added `seed=None` parameter; `validate_diffusion` passes `seed=42` so every validation call draws identical initial noise → scores are comparable epoch-to-epoch
+2. `diffusion_config.yaml`: `ema_decay: 0.9999 → 0.999` (lookback ~1,000 steps ≈ 4 epochs)
+
+Expected behavior:
+- `Val (model)` should be monotonically trending upward (no seed-induced oscillation)
+- `Val (EMA)` should track training quality within a few epochs rather than lagging by ~40
+
+Started: 2026-02-19. Training 200 epochs on Torch HPC (H200/L40S, 64GB, 24h).
+
+---
+
+### Git Commit Reference
+
+| Commit | Description |
+|--------|-------------|
+| `c261b18` | Phase 1: 2.5D U-Net with PSNR+SSIM loss (clean rollback point) |
+| `8f8b416` | Phase 2: U-Net with MS-SSIM loss (pre-diffusion snapshot) |
+| `efd168e` | Phase 2: Add conditional DDPM diffusion model (SR3-style) — had BatchNorm bug |
+| `d36ef3d` | Fix diffusion model: GroupNorm + SiLU, remove recalibrate_bn |
+| `d3bab3f` | Fix diffusion validation: seeded noise + faster EMA decay (0.999) |
+
+---
+
+### Running Score Summary
+
+| Model / Run | Phase | Leaderboard Score | Notes |
+|-------------|-------|-------------------|-------|
+| Bicubic (baseline) | 1 | 0.456 | `sample_submission.csv` |
+| U-Net seed11 (best) | 1 | **0.4525** | Below baseline |
+| U-Net ensemble (best) | 1 | 0.4478 | Ensemble hurt vs single |
+| Bicubic (baseline) | 2 | 0.5130 | MS-SSIM metric |
+| `sota_diffusion.csv` | 2 | 0.6399 | Leaderboard reference |
+| diffusion_v3 (EMA) | 2 | TBD | Training in progress |
