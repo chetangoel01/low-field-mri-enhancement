@@ -4,8 +4,8 @@ Features: EMA, AMP, cosine LR with warmup, gradient clipping, TensorBoard.
 Single-phase training (no GAN). Optimizes Charbonnier L1 + MS-SSIM (Phase 2).
 
 Usage:
-    python train.py --config config.yaml --experiment unet_v1
-    python train.py --config config.yaml --experiment unet_v1 --resume experiments/unet_v1/checkpoints/checkpoint_latest.pth
+    python src/train.py --config configs/config.yaml --experiment unet_v1
+    python src/train.py --config configs/config.yaml --experiment unet_v1 --resume experiments/unet_v1/checkpoints/checkpoint_latest.pth
 """
 
 import argparse
@@ -348,7 +348,7 @@ def train(config, experiment_name, resume_path=None, device=None):
 
 def main():
     parser = argparse.ArgumentParser(description='Train 2.5D U-Net for MRI Super Resolution')
-    parser.add_argument('--config', type=str, default='config.yaml')
+    parser.add_argument('--config', type=str, default='configs/config.yaml')
     parser.add_argument('--experiment', type=str, required=True)
     parser.add_argument('--resume', type=str, default=None)
     parser.add_argument('--device', type=str, default=None)

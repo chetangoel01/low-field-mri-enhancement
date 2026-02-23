@@ -4,7 +4,7 @@ Runs inference on held-out validation volumes (017, 018) and scores
 against ground truth using the exact competition metric (metric.py).
 
 Usage:
-    python validate.py --checkpoint experiments/unet_v1/checkpoints/best_model.pth
+    python src/validate.py --checkpoint experiments/unet_v1/checkpoints/best_model.pth
 """
 
 import argparse
@@ -24,7 +24,7 @@ from metric import score as competition_score
 def main():
     parser = argparse.ArgumentParser(description='Local validation with competition metric')
     parser.add_argument('--checkpoint', type=str, required=True)
-    parser.add_argument('--config', type=str, default='config.yaml')
+    parser.add_argument('--config', type=str, default='configs/config.yaml')
     parser.add_argument('--no_tta', action='store_true')
     parser.add_argument('--no_hist_match', action='store_true')
     parser.add_argument('--device', type=str, default=None)

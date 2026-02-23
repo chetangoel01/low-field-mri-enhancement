@@ -5,8 +5,8 @@ Input to denoiser: concat([noisy_HF (1ch), LF_context (5ch)]) = (B, 6, H, W).
 Loss: MSE on predicted noise epsilon (standard DDPM objective).
 
 Usage:
-    python diffusion_train.py --config diffusion_config.yaml --experiment diffusion_v1
-    python diffusion_train.py --config diffusion_config.yaml --experiment diffusion_v1 --resume experiments/diffusion_v1/checkpoints/checkpoint_latest.pth
+    python src/diffusion_train.py --config configs/diffusion_config.yaml --experiment diffusion_v1
+    python src/diffusion_train.py --config configs/diffusion_config.yaml --experiment diffusion_v1 --resume experiments/diffusion_v1/checkpoints/checkpoint_latest.pth
 """
 
 import argparse
@@ -489,7 +489,7 @@ def train(config, experiment_name, resume_path=None, device=None):
 
 def main():
     parser = argparse.ArgumentParser(description='DDPM training for MRI super-resolution')
-    parser.add_argument('--config',     type=str, default='diffusion_config.yaml')
+    parser.add_argument('--config',     type=str, default='configs/diffusion_config.yaml')
     parser.add_argument('--experiment', type=str, required=True)
     parser.add_argument('--resume',     type=str, default=None)
     parser.add_argument('--device',     type=str, default=None)

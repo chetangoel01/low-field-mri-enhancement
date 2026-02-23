@@ -92,16 +92,19 @@ Slice-by-slice prediction with 4-way test-time augmentation (original + horizont
 
 ```
 .
-├── model.py              # 2.5D U-Net architecture
-├── losses.py             # Charbonnier L1 + Competition SSIM losses
-├── dataset.py            # SliceMRIDataset with augmentation
-├── train.py              # Training loop (EMA, AMP, cosine LR, TensorBoard)
-├── inference.py          # Inference with TTA, outputs submission CSV
-├── validate.py           # Local validation using competition metric
-├── config.yaml           # All hyperparameters and paths
+├── src/                  # Training/inference/evaluation code
+│   ├── model.py
+│   ├── losses.py
+│   ├── dataset.py
+│   ├── train.py
+│   ├── inference.py
+│   └── validate.py
+├── configs/              # YAML experiment configurations
+│   ├── config.yaml
+│   └── diffusion_config.yaml
 ├── requirements.txt      # Python dependencies
-├── extract_slices.py     # [Competition-provided] Slice encoding/decoding
-├── metric.py             # [Competition-provided] SSIM + PSNR scoring
+├── src/extract_slices.py # [Competition-provided] Slice encoding/decoding
+├── src/metric.py         # [Competition-provided] SSIM + PSNR scoring
 ├── hpc/                  # NYU HPC (Torch cluster) SLURM scripts
 │   ├── train_job.sbatch
 │   ├── inference_job.sbatch
@@ -124,23 +127,23 @@ pip install -r requirements.txt
 
 ```bash
 # Start training
-python train.py --config config.yaml --experiment unet_v1
+python src/train.py --config configs/config.yaml --experiment unet_v1
 
 # Resume from checkpoint
-python train.py --config config.yaml --experiment unet_v1 --resume experiments/unet_v1/checkpoints/checkpoint_latest.pth
+python src/train.py --config configs/config.yaml --experiment unet_v1 --resume experiments/unet_v1/checkpoints/checkpoint_latest.pth
 ```
 
 ### Inference
 
 ```bash
 # Generate submission CSV
-python inference.py --checkpoint experiments/unet_v1/checkpoints/best_model.pth --output submission.csv
+python src/inference.py --config configs/config.yaml --checkpoint experiments/unet_v1/checkpoints/best_model.pth --output submission.csv
 
 # Without TTA (faster)
-python inference.py --checkpoint best_model.pth --no_tta --output submission.csv
+python src/inference.py --config configs/config.yaml --checkpoint best_model.pth --no_tta --output submission.csv
 
 # Save predicted NIfTI volumes
-python inference.py --checkpoint best_model.pth --save_volumes --output_dir predictions
+python src/inference.py --config configs/config.yaml --checkpoint best_model.pth --save_volumes --output_dir predictions
 ```
 
 ### NYU HPC

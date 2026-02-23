@@ -7,8 +7,8 @@ TTA: run DDIM on 4 flip variants of the LF conditioning; flip outputs back and
 average. This exploits the stochastic diversity of different flip orientations.
 
 Usage:
-    python diffusion_inference.py --checkpoint experiments/diffusion_v1/checkpoints/best_model.pth --output submission.csv
-    python diffusion_inference.py --checkpoint best.pth --ddim_steps 50 --no_tta --output sub.csv
+    python src/diffusion_inference.py --checkpoint experiments/diffusion_v1/checkpoints/best_model.pth --output submission.csv
+    python src/diffusion_inference.py --checkpoint best.pth --ddim_steps 50 --no_tta --output sub.csv
 """
 
 import argparse

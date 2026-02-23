@@ -201,7 +201,7 @@ def get_simple_dataloaders(
     Get simple dataloaders that work directly with raw train data.
     
     Args:
-        config_path: Path to config.yaml
+        config_path: Path to configs/config.yaml
         batch_size: Batch size
         num_workers: Number of data loading workers
     
@@ -859,7 +859,7 @@ def get_slice_dataloaders(
 
 if __name__ == "__main__":
     # Test the dataset
-    train_loader, val_loader = get_simple_dataloaders('config.yaml', batch_size=2)
+    train_loader, val_loader = get_simple_dataloaders('configs/config.yaml', batch_size=2)
 
     print(f"\nTrain batches: {len(train_loader)}")
     print(f"Val batches: {len(val_loader)}")

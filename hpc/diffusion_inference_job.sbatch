@@ -12,7 +12,7 @@
 
 # Usage:
 #   EXPERIMENT_NAME="diffusion_recovery_v1" sbatch hpc/diffusion_inference_job.sbatch
-#   EXPERIMENT_NAME="diffusion_recovery_v1" CONFIG_PATH="diffusion_config_recovery_v1.yaml" DDIM_STEPS=50 sbatch hpc/diffusion_inference_job.sbatch
+#   EXPERIMENT_NAME="diffusion_recovery_v1" CONFIG_PATH="configs/diffusion_config_recovery_v1.yaml" DDIM_STEPS=50 sbatch hpc/diffusion_inference_job.sbatch
 #   EXPERIMENT_NAME="diffusion_recovery_v1" CHECKPOINT_PATH="experiments/diffusion_recovery_v1/checkpoints/checkpoint_latest.pth" OUTPUT_PATH="experiments/diffusion_recovery_v1/submission_latest.csv" sbatch hpc/diffusion_inference_job.sbatch
 
 set -e
@@ -40,7 +40,7 @@ echo "DDIM steps: ${DDIM_STEPS:-from config}"
 echo "TTA: ${NO_TTA:+disabled}"${NO_TTA:-enabled}
 echo "============================================"
 
-CMD="python diffusion_inference.py --checkpoint $CHECKPOINT_PATH --output $OUTPUT_PATH"
+CMD="python src/diffusion_inference.py --checkpoint $CHECKPOINT_PATH --output $OUTPUT_PATH"
 
 [ -n "$NO_TTA" ]     && CMD="$CMD --no_tta"
 [ -n "$DDIM_STEPS" ] && CMD="$CMD --ddim_steps $DDIM_STEPS"

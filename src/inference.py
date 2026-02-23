@@ -7,8 +7,8 @@ Features:
 - Outputs submission CSV with base64-encoded slices
 
 Usage:
-    python inference.py --checkpoint experiments/unet_v1/checkpoints/best_model.pth --output submission.csv
-    python inference.py --checkpoint best.pth --no_tta --output submission.csv
+    python src/inference.py --checkpoint experiments/unet_v1/checkpoints/best_model.pth --output submission.csv
+    python src/inference.py --checkpoint best.pth --no_tta --output submission.csv
 """
 
 import argparse
@@ -212,7 +212,7 @@ def _simple_hist_match(source, reference):
 def main():
     parser = argparse.ArgumentParser(description='MRI Super Resolution Inference')
     parser.add_argument('--checkpoint', type=str, required=True)
-    parser.add_argument('--config', type=str, default='config.yaml')
+    parser.add_argument('--config', type=str, default='configs/config.yaml')
     parser.add_argument('--test_dir', type=str, default=None)
     parser.add_argument('--output', type=str, default='submission.csv')
     parser.add_argument('--no_tta', action='store_true')

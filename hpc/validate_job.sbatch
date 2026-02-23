@@ -23,12 +23,12 @@ CHECKPOINT="experiments/${EXPERIMENT_NAME}/checkpoints/best_model.pth"
 echo "Checkpoint: $CHECKPOINT"
 
 echo "=== No histogram matching, with TTA ==="
-python validate.py --checkpoint $CHECKPOINT --no_hist_match
+python src/validate.py --checkpoint $CHECKPOINT --no_hist_match
 
 echo ""
 echo "=== No histogram matching, no TTA ==="
-python validate.py --checkpoint $CHECKPOINT --no_hist_match --no_tta
+python src/validate.py --checkpoint $CHECKPOINT --no_hist_match --no_tta
 
 echo ""
 echo "=== With histogram matching, with TTA ==="
-python validate.py --checkpoint $CHECKPOINT
+python src/validate.py --checkpoint $CHECKPOINT

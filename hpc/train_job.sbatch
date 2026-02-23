@@ -12,8 +12,8 @@
 
 # Usage:
 #   EXPERIMENT_NAME="unet_fresh_v1" sbatch hpc/train_job.sbatch
-#   EXPERIMENT_NAME="unet_se_v1" CONFIG_PATH="config_unet_se.yaml" sbatch hpc/train_job.sbatch
-#   EXPERIMENT_NAME="unet_se_v1" CONFIG_PATH="config_unet_se.yaml" RESUME_FROM="experiments/unet_se_v1/checkpoints/checkpoint_latest.pth" sbatch hpc/train_job.sbatch
+#   EXPERIMENT_NAME="unet_se_v1" CONFIG_PATH="configs/config_unet_se.yaml" sbatch hpc/train_job.sbatch
+#   EXPERIMENT_NAME="unet_se_v1" CONFIG_PATH="configs/config_unet_se.yaml" RESUME_FROM="experiments/unet_se_v1/checkpoints/checkpoint_latest.pth" sbatch hpc/train_job.sbatch
 
 set -e
 
@@ -28,7 +28,7 @@ mkdir -p logs
 
 # Defaults
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-unet_fresh_v1}"
-CONFIG_PATH="${CONFIG_PATH:-config.yaml}"
+CONFIG_PATH="${CONFIG_PATH:-configs/config.yaml}"
 
 echo "============================================"
 echo "Job ID: $SLURM_JOB_ID"
@@ -40,7 +40,7 @@ echo "Resume: ${RESUME_FROM:-none}"
 echo "============================================"
 
 # Build command
-CMD="python train.py --config $CONFIG_PATH --experiment $EXPERIMENT_NAME"
+CMD="python src/train.py --config $CONFIG_PATH --experiment $EXPERIMENT_NAME"
 
 if [ -n "$RESUME_FROM" ]; then
     CMD="$CMD --resume $RESUME_FROM"
