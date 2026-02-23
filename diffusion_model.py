@@ -157,6 +157,10 @@ class DiffusionUNet(nn.Module):
                 nn.init.xavier_uniform_(m.weight)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
+        # Zero-init final output projection: model starts outputting ~0 noise,
+        # giving MSE ≈ 1 at init (correct noise scale) instead of MSE ≈ 8-12.
+        nn.init.zeros_(self.final.weight)
+        nn.init.zeros_(self.final.bias)
 
     def _up_and_concat(self, x, skip):
         """Bilinear upsample x to match skip spatial size, then concat."""

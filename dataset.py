@@ -166,12 +166,11 @@ class SliceMRIDataset(Dataset):
             inp = inp[:, ::-1, :].copy()
             tgt = tgt[:, ::-1, :].copy()
 
-        # Intensity scaling
+        # Intensity scaling (input only — target is fixed ground truth, must not be scaled)
         scale_range = self.aug.get('intensity_scale', None)
         if scale_range and random.random() < self.aug.get('intensity_scale_prob', 0.5):
             scale = random.uniform(scale_range[0], scale_range[1])
             inp = np.clip(inp * scale, 0.0, 1.0)
-            tgt = np.clip(tgt * scale, 0.0, 1.0)
 
         # Gaussian noise (input only)
         noise_std = self.aug.get('gaussian_noise_std', 0.0)

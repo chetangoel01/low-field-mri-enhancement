@@ -1,0 +1,47 @@
+# Diffusion recovery ablation v3
+# Change from v1: stronger auxiliary signal and earlier activation.
+
+data:
+  train_lf_dir: "train/low_field"
+  train_hf_dir: "train/high_field"
+  test_lf_dir: "test/low_field"
+  val_samples: ["017", "018"]
+  num_slices: 200
+  slice_context: 5
+  target_shape: [179, 221, 200]
+
+diffusion:
+  T: 1000
+  beta_start: 1.0e-4
+  beta_end: 0.02
+  time_emb_dim: 256
+  base_features: 64
+  ddim_steps: 50
+  ddim_steps_val: 20
+
+training:
+  epochs: 1000
+  batch_size: 32
+  lr: 1.0e-4
+  min_lr: 1.0e-6
+  weight_decay: 1.0e-4
+  adam_betas: [0.9, 0.999]
+  lr_warmup_steps: 500
+  gradient_clip_norm: 1.0
+  use_amp: true
+  ema_decay: 0.999
+  lambda_ssim: 0.2
+  aux_msssim_weight: 0.95
+  aux_l1_weight: 0.05
+  use_snr_weight: false
+  ssim_start_epoch: 0
+  val_seed: 42
+  early_stopping_patience: 200
+  num_workers: 4
+
+augmentation:
+  horizontal_flip: true
+  vertical_flip: true
+  intensity_scale: [0.9, 1.1]
+  intensity_scale_prob: 0.5
+  gaussian_noise_prob: 0.0

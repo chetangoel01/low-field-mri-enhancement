@@ -13,10 +13,29 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class SEBlock(nn.Module):
+    """Squeeze-and-Excitation channel attention."""
+
+    def __init__(self, channels, reduction=16):
+        super().__init__()
+        hidden = max(channels // reduction, 4)
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Conv2d(channels, hidden, 1, bias=True),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden, channels, 1, bias=True),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        scale = self.fc(self.pool(x))
+        return x * scale
+
+
 class ConvBlock(nn.Module):
     """Two Conv2d(3x3) + BN + ReLU."""
 
-    def __init__(self, in_ch, out_ch):
+    def __init__(self, in_ch, out_ch, use_se=False, se_reduction=16):
         super().__init__()
         self.block = nn.Sequential(
             nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
@@ -26,9 +45,11 @@ class ConvBlock(nn.Module):
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
         )
+        self.attn = SEBlock(out_ch, reduction=se_reduction) if use_se else nn.Identity()
 
     def forward(self, x):
-        return self.block(x)
+        x = self.block(x)
+        return self.attn(x)
 
 
 class UNet2D(nn.Module):
@@ -41,26 +62,28 @@ class UNet2D(nn.Module):
     Residual: output += center input slice
     """
 
-    def __init__(self, in_channels=5, out_channels=1, base_features=64):
+    def __init__(self, in_channels=5, out_channels=1, base_features=64,
+                 attention='none', se_reduction=16):
         super().__init__()
         f = base_features  # 64
+        use_se = attention.lower() == 'se'
 
         # Encoder
-        self.enc1 = ConvBlock(in_channels, f)        # 64
-        self.enc2 = ConvBlock(f, f * 2)              # 128
-        self.enc3 = ConvBlock(f * 2, f * 4)          # 256
-        self.enc4 = ConvBlock(f * 4, f * 8)          # 512
+        self.enc1 = ConvBlock(in_channels, f, use_se=use_se, se_reduction=se_reduction)        # 64
+        self.enc2 = ConvBlock(f, f * 2, use_se=use_se, se_reduction=se_reduction)              # 128
+        self.enc3 = ConvBlock(f * 2, f * 4, use_se=use_se, se_reduction=se_reduction)          # 256
+        self.enc4 = ConvBlock(f * 4, f * 8, use_se=use_se, se_reduction=se_reduction)          # 512
 
         self.pool = nn.MaxPool2d(2)
 
         # Bottleneck
-        self.bottleneck = ConvBlock(f * 8, f * 16)   # 1024
+        self.bottleneck = ConvBlock(f * 8, f * 16, use_se=use_se, se_reduction=se_reduction)   # 1024
 
         # Decoder
-        self.dec4 = ConvBlock(f * 16 + f * 8, f * 8)  # 512
-        self.dec3 = ConvBlock(f * 8 + f * 4, f * 4)   # 256
-        self.dec2 = ConvBlock(f * 4 + f * 2, f * 2)   # 128
-        self.dec1 = ConvBlock(f * 2 + f, f)            # 64
+        self.dec4 = ConvBlock(f * 16 + f * 8, f * 8, use_se=use_se, se_reduction=se_reduction)  # 512
+        self.dec3 = ConvBlock(f * 8 + f * 4, f * 4, use_se=use_se, se_reduction=se_reduction)   # 256
+        self.dec2 = ConvBlock(f * 4 + f * 2, f * 2, use_se=use_se, se_reduction=se_reduction)   # 128
+        self.dec1 = ConvBlock(f * 2 + f, f, use_se=use_se, se_reduction=se_reduction)            # 64
 
         # Final 1x1 conv
         self.final = nn.Conv2d(f, out_channels, 1)

@@ -12,7 +12,8 @@
 
 # Usage:
 #   EXPERIMENT_NAME="unet_fresh_v1" sbatch hpc/inference_job.sbatch
-#   EXPERIMENT_NAME="unet_fresh_v1" NO_TTA=1 sbatch hpc/inference_job.sbatch
+#   EXPERIMENT_NAME="unet_se_v1" CONFIG_PATH="config_unet_se.yaml" sbatch hpc/inference_job.sbatch
+#   EXPERIMENT_NAME="unet_se_v1" CHECKPOINT_PATH="experiments/unet_se_v1/checkpoints/checkpoint_latest.pth" OUTPUT_PATH="experiments/unet_se_v1/submission_latest.csv" sbatch hpc/inference_job.sbatch
 
 set -e
 
@@ -27,20 +28,22 @@ mkdir -p logs
 
 # Defaults
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-unet_fresh_v1}"
-CHECKPOINT="experiments/${EXPERIMENT_NAME}/checkpoints/best_model.pth"
-OUTPUT="experiments/${EXPERIMENT_NAME}/submission.csv"
+CONFIG_PATH="${CONFIG_PATH:-config.yaml}"
+CHECKPOINT_PATH="${CHECKPOINT_PATH:-experiments/${EXPERIMENT_NAME}/checkpoints/best_model.pth}"
+OUTPUT_PATH="${OUTPUT_PATH:-experiments/${EXPERIMENT_NAME}/submission.csv}"
 
 echo "============================================"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURM_NODELIST"
 echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
 echo "Experiment: $EXPERIMENT_NAME"
-echo "Checkpoint: $CHECKPOINT"
-echo "Output: $OUTPUT"
+echo "Config: $CONFIG_PATH"
+echo "Checkpoint: $CHECKPOINT_PATH"
+echo "Output: $OUTPUT_PATH"
 echo "============================================"
 
 # Build inference command
-CMD="python inference.py --checkpoint $CHECKPOINT --output $OUTPUT"
+CMD="python inference.py --config $CONFIG_PATH --checkpoint $CHECKPOINT_PATH --output $OUTPUT_PATH"
 
 if [ -n "$NO_TTA" ]; then
     CMD="$CMD --no_tta"
@@ -54,12 +57,12 @@ echo "Running inference: $CMD"
 $CMD
 
 echo ""
-echo "Inference complete. Submission saved to: $OUTPUT"
+echo "Inference complete. Submission saved to: $OUTPUT_PATH"
 
 # Also run validation with same flags
 echo ""
 echo "Running validation..."
-VAL_CMD="python validate.py --checkpoint $CHECKPOINT"
+VAL_CMD="python validate.py --config $CONFIG_PATH --checkpoint $CHECKPOINT_PATH"
 if [ -n "$NO_TTA" ]; then VAL_CMD="$VAL_CMD --no_tta"; fi
 if [ -n "$NO_HIST_MATCH" ]; then VAL_CMD="$VAL_CMD --no_hist_match"; fi
 $VAL_CMD

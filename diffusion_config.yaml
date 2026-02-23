@@ -20,8 +20,8 @@ diffusion:
   ddim_steps_val: 20               # DDIM steps for fast validation sampling
 
 training:
-  epochs: 200
-  batch_size: 12
+  epochs: 1000                     # H200 runs ~10s/epoch → 1000 epochs ≈ 3h; was 200 (only 33min of 24h)
+  batch_size: 32                   # was 12; H200 has 80GB — larger batch = better GPU utilization
   lr: 1.0e-4                       # lower LR than U-Net — diffusion more sensitive
   min_lr: 1.0e-6
   weight_decay: 1.0e-4
@@ -30,8 +30,14 @@ training:
   gradient_clip_norm: 1.0
   use_amp: true
   ema_decay: 0.999                 # 0.999 = ~1000-step lookback; 0.9999 was too slow (~10K steps)
-  early_stopping_patience: 40
-  num_workers: 4
+  lambda_ssim: 0.1                 # total auxiliary image-space loss weight on x0_hat
+  aux_msssim_weight: 0.84          # composition inside auxiliary loss
+  aux_l1_weight: 0.16              # composition inside auxiliary loss
+  use_snr_weight: true             # if true, scales auxiliary term by mean(alpha_cumprod[t])
+  ssim_start_epoch: 10             # skip auxiliary loss until model stabilizes on MSE (avoids NaN from saturated x0_hat at init)
+  val_seed: 42                     # fixed RNG seed for reproducible DDIM validation
+  early_stopping_patience: 200     # 200 = 40 consecutive missed validations; scaled up with 1000 epoch budget
+  num_workers: 4                   # in-memory dataset — 4 workers sufficient; avoid CPU contention on shared node
 
 augmentation:
   horizontal_flip: true

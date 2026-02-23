@@ -246,9 +246,16 @@ def main():
         if ref_histogram is not None:
             print(f"Reference histogram computed ({len(ref_histogram)} values)")
 
-    # Find test volumes
-    test_files = sorted([f for f in os.listdir(test_dir) if f.endswith(('.nii', '.nii.gz'))])
-    print(f"Found {len(test_files)} test volumes")
+    # Find test volumes and keep one file per sample_id.
+    candidates = sorted([f for f in os.listdir(test_dir) if f.endswith(('.nii', '.nii.gz'))])
+    by_sample = {}
+    for f in candidates:
+        sample_id = '_'.join(f.split('_')[:2])
+        prev = by_sample.get(sample_id)
+        if prev is None or (prev.endswith('.nii') and f.endswith('.nii.gz')):
+            by_sample[sample_id] = f
+    test_files = [by_sample[k] for k in sorted(by_sample.keys())]
+    print(f"Found {len(candidates)} candidate files, using {len(test_files)} unique test volumes")
 
     target_shape = tuple(config['data']['target_shape'])
     all_rows = []

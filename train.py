@@ -154,6 +154,8 @@ def train(config, experiment_name, resume_path=None, device=None):
         in_channels=config['data']['slice_context'],
         out_channels=1,
         base_features=config['model']['base_features'],
+        attention=config['model'].get('attention', 'none'),
+        se_reduction=config['model'].get('se_reduction', 16),
     ).to(device)
     param_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model parameters: {param_count:,}")

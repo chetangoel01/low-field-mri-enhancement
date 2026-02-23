@@ -24,6 +24,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import yaml
 
+from pytorch_msssim import ms_ssim
 from diffusion_model import DiffusionUNet
 from dataset import SliceMRIDataset
 
@@ -88,8 +89,12 @@ def ddim_sample(model, lf_cond, schedule, n_steps, device, use_amp=True, seed=No
     T = schedule['betas'].shape[0]
     B, _, H, W = lf_cond.shape
 
-    # Evenly-spaced timesteps from T-1 down to 0
-    timesteps = torch.linspace(T - 1, 0, n_steps, dtype=torch.long, device=device)
+    # Evenly-spaced timesteps from T-1 down to 0.
+    # Use np.round before int cast — torch.linspace with dtype=long truncates floats,
+    # giving alternating 52/53-step gaps at T=1000, n_steps=20.
+    timesteps = torch.from_numpy(
+        np.round(np.linspace(T - 1, 0, n_steps)).astype(np.int64)
+    ).to(device)
 
     if seed is not None:
         torch.manual_seed(seed)
@@ -137,29 +142,6 @@ def update_ema(ema_model, model, decay):
             ema_p.data.mul_(decay).add_(p.data, alpha=1 - decay)
 
 
-@torch.no_grad()
-def recalibrate_bn(model, data_loader, device):
-    """Recalculate BatchNorm running stats for EMA model."""
-    was_training = model.training
-    model.train()
-    for module in model.modules():
-        if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)):
-            module.running_mean.zero_()
-            module.running_var.fill_(1)
-            module.num_batches_tracked.zero_()
-    for batch in data_loader:
-        if isinstance(batch, (list, tuple)):
-            inp = batch[0].to(device)
-        else:
-            inp = batch['input'].to(device)
-        t_dummy = torch.zeros(inp.shape[0], dtype=torch.long, device=device)
-        noise = torch.randn(inp.shape[0], 1, inp.shape[2], inp.shape[3], device=device)
-        model_in = torch.cat([noise, inp], dim=1)
-        model(model_in, t_dummy)
-    if not was_training:
-        model.eval()
-
-
 def compute_msssim_metric(pred, target):
     """Compute MS-SSIM matching phase_2/metric.py."""
     from pytorch_msssim import ms_ssim
@@ -177,11 +159,17 @@ def compute_msssim_metric(pred, target):
         return val.clamp(0.0, 1.0).item()
 
 
-def validate_diffusion(model, val_loader, schedule, ddim_steps_val, device, use_amp):
+def validate_diffusion(model, val_loader, schedule, ddim_steps_val, device, use_amp, val_seed=42):
     """Run DDIM inference on val set and compute MS-SSIM."""
     model.eval()
     total_msssim = 0.0
     n_batches = 0
+
+    # Seed once before the loop (reproducible across epochs) then restore after.
+    # Seeding per-batch (seed=42 inside ddim_sample) gave every batch the same
+    # initial noise and poisoned the global training RNG after validation.
+    rng_state = torch.get_rng_state()
+    torch.manual_seed(val_seed)
 
     for batch in val_loader:
         if isinstance(batch, (list, tuple)):
@@ -190,10 +178,11 @@ def validate_diffusion(model, val_loader, schedule, ddim_steps_val, device, use_
             inp = batch['input'].to(device)
             tgt = batch['target'].to(device)
 
-        pred = ddim_sample(model, inp, schedule, ddim_steps_val, device, use_amp, seed=42)
+        pred = ddim_sample(model, inp, schedule, ddim_steps_val, device, use_amp, seed=None)
         total_msssim += compute_msssim_metric(pred, tgt)
         n_batches += 1
 
+    torch.set_rng_state(rng_state)
     return {'msssim': total_msssim / max(n_batches, 1)}
 
 
@@ -225,12 +214,13 @@ def train(config, experiment_name, resume_path=None, device=None):
     train_loader = DataLoader(
         train_dataset, batch_size=tcfg['batch_size'], shuffle=True,
         num_workers=tcfg['num_workers'], pin_memory=True, drop_last=True,
+        persistent_workers=(tcfg['num_workers'] > 0), prefetch_factor=2,
     )
     val_loader = None
     if val_dataset and len(val_dataset) > 0:
         val_loader = DataLoader(
             val_dataset, batch_size=tcfg['batch_size'], shuffle=False,
-            num_workers=tcfg['num_workers'], pin_memory=True,
+            num_workers=2, pin_memory=True,
         )
 
     print(f"Train: {len(train_dataset)} slices, {len(train_loader)} batches")
@@ -302,12 +292,33 @@ def train(config, experiment_name, resume_path=None, device=None):
         log_file.write(msg + '\n')
         log_file.flush()
 
+    lambda_ssim      = tcfg.get('lambda_ssim', 0.0)
+    ssim_start_epoch = tcfg.get('ssim_start_epoch', 0)
+    aux_msssim_w     = tcfg.get('aux_msssim_weight', 0.84)
+    aux_l1_w         = tcfg.get('aux_l1_weight', 0.16)
+    use_snr_weight   = bool(tcfg.get('use_snr_weight', True))
+    val_seed         = int(tcfg.get('val_seed', 42))
+    aux_sum = aux_msssim_w + aux_l1_w
+    if aux_sum <= 0:
+        aux_msssim_w, aux_l1_w = 0.84, 0.16
+        aux_sum = 1.0
+    aux_msssim_w /= aux_sum
+    aux_l1_w /= aux_sum
+
     log(f"Training diffusion {experiment_name}: epochs={tcfg['epochs']}, lr={tcfg['lr']}, bs={tcfg['batch_size']}")
     log(f"DDPM T={dcfg['T']}, val_ddim={dcfg['ddim_steps_val']}, infer_ddim={dcfg['ddim_steps']}")
+    snr_txt = "on" if use_snr_weight else "off"
+    log(
+        f"Loss: MSE + {lambda_ssim} * aux(x0_hat), "
+        f"aux={aux_msssim_w:.2f}*(1-MS-SSIM)+{aux_l1_w:.2f}*L1, "
+        f"SNR_weight={snr_txt}, SSIM active after epoch {ssim_start_epoch}"
+    )
 
     for epoch in range(start_epoch, tcfg['epochs']):
         model.train()
         epoch_loss = 0.0
+        epoch_mse  = 0.0
+        epoch_ssim = 0.0
         t0 = time.time()
 
         for batch_idx, batch in enumerate(train_loader):
@@ -338,11 +349,47 @@ def train(config, experiment_name, resume_path=None, device=None):
 
             with autocast(enabled=tcfg['use_amp']):
                 pred_noise = model(model_in, t)
-                loss = F.mse_loss(pred_noise, noise)
+                mse_loss   = F.mse_loss(pred_noise, noise)
+
+                # Auxiliary image-space loss on reconstructed x0.
+                # Formula: aux_msssim_weight*(1-MS-SSIM) + aux_l1_weight*L1,
+                # weighted by lambda_ssim.
+                # The L1 component stabilizes luminance; MS-SSIM aligns with competition metric.
+                # ssim_start_epoch: skip until model stabilizes on MSE to avoid NaN gradients
+                # from saturated x0_hat at initialization.
+                if lambda_ssim > 0 and epoch >= ssim_start_epoch:
+                    sqrt_acp_t   = schedule['sqrt_acp'][t][:, None, None, None]
+                    sqrt_1macp_t = schedule['sqrt_1macp'][t][:, None, None, None]
+                    x0_hat = ((xt - sqrt_1macp_t * pred_noise) /
+                              sqrt_acp_t.clamp(min=1e-8)).clamp(0.0, 1.0)
+                    # Safety guard: skip if x0_hat is degenerate (all saturated → NaN MS-SSIM)
+                    with torch.no_grad():
+                        x0_hat_std = x0_hat.detach().float().std().item()
+                    if x0_hat_std > 0.01:
+                        msssim_val = ms_ssim(x0_hat.float(), x0.float(), data_range=1.0,
+                                             size_average=True, win_size=11, win_sigma=1.5,
+                                             weights=[0.0448, 0.2856, 0.3001, 0.2363, 0.1333],
+                                             K=(0.01, 0.03))
+                        if torch.isfinite(msssim_val):
+                            ssim_loss = (
+                                aux_msssim_w * (1.0 - msssim_val).clamp(0.0, 1.0) +
+                                aux_l1_w * F.l1_loss(x0_hat.float(), x0.float())
+                            )
+                            # Optional SNR weighting: down-weight noisy timesteps.
+                            snr_weight = schedule['alphas_cumprod'][t].mean() if use_snr_weight else 1.0
+                            loss = mse_loss + lambda_ssim * snr_weight * ssim_loss
+                        else:
+                            ssim_loss = torch.zeros(1, device=device)
+                            loss = mse_loss
+                    else:
+                        ssim_loss = torch.zeros(1, device=device)
+                        loss = mse_loss
+                else:
+                    ssim_loss = torch.zeros(1, device=device)
+                    loss = mse_loss
 
             if not torch.isfinite(loss):
                 optimizer.zero_grad(set_to_none=True)
-                scaler.update()
                 global_step += 1
                 continue
 
@@ -355,24 +402,31 @@ def train(config, experiment_name, resume_path=None, device=None):
 
             update_ema(ema_model, model, tcfg['ema_decay'])
 
-            epoch_loss  += loss.item()
+            epoch_loss += loss.item()
+            epoch_mse  += mse_loss.item()
+            epoch_ssim += ssim_loss.item() if lambda_ssim > 0 else 0.0
             global_step += 1
 
             if global_step % 50 == 0:
-                writer.add_scalar('train/mse_loss', loss.item(), global_step)
-                writer.add_scalar('train/lr',       lr,          global_step)
+                writer.add_scalar('train/loss',     loss.item(),     global_step)
+                writer.add_scalar('train/mse_loss', mse_loss.item(), global_step)
+                writer.add_scalar('train/ssim_loss', ssim_loss.item() if lambda_ssim > 0 else 0.0, global_step)
+                writer.add_scalar('train/lr',       lr,              global_step)
 
         n       = len(train_loader)
         elapsed = time.time() - t0
-        log(f"Epoch {epoch:03d} | mse={epoch_loss/n:.4f} | lr={lr:.2e} | {elapsed:.0f}s")
+        if lambda_ssim > 0:
+            log(f"Epoch {epoch:03d} | loss={epoch_loss/n:.4f} mse={epoch_mse/n:.4f} ssim={epoch_ssim/n:.4f} | lr={lr:.2e} | {elapsed:.0f}s")
+        else:
+            log(f"Epoch {epoch:03d} | mse={epoch_loss/n:.4f} | lr={lr:.2e} | {elapsed:.0f}s")
 
         # Validation every 5 epochs (DDIM-20 for speed)
         if val_loader and (epoch % 5 == 0 or epoch == tcfg['epochs'] - 1):
             val_m = validate_diffusion(model, val_loader, schedule,
-                                       dcfg['ddim_steps_val'], device, tcfg['use_amp'])
+                                       dcfg['ddim_steps_val'], device, tcfg['use_amp'], val_seed=val_seed)
             # GroupNorm has no running stats; no BN calibration needed
             ema_m = validate_diffusion(ema_model, val_loader, schedule,
-                                       dcfg['ddim_steps_val'], device, tcfg['use_amp'])
+                                       dcfg['ddim_steps_val'], device, tcfg['use_amp'], val_seed=val_seed)
 
             log(f"  Val (model): MS-SSIM={val_m['msssim']:.4f}")
             log(f"  Val (EMA):   MS-SSIM={ema_m['msssim']:.4f}")

@@ -80,12 +80,9 @@ def predict_volume_ddim(model, lf_vol, config, schedule, n_steps, device,
 
     # Upsample LF to HF spatial size
     lf_up = upsample_volume(lf_vol, target_shape)
-
-    # Normalize upsampled LF volume
-    p1, p99 = np.percentile(lf_up, [1, 99])
-    lf_up = np.clip(lf_up, p1, p99)
-    if p99 - p1 > 0:
-        lf_up = (lf_up - p1) / (p99 - p1)
+    # Per-slice normalization — must match dataset.py training normalization exactly.
+    # DO NOT use volume-level percentile normalization here; the model was trained on
+    # per-slice min/max [0,1] normalized inputs (normalize_slice in dataset.py).
 
     H, W, D = lf_up.shape
     predicted = np.zeros((H, W, num_slices), dtype=np.float32)
@@ -102,7 +99,7 @@ def predict_volume_ddim(model, lf_vol, config, schedule, n_steps, device,
             elif sz >= D:
                 sz = 2 * (D - 1) - sz
             sz = max(0, min(sz, D - 1))
-            slices.append(lf_up[:, :, sz])
+            slices.append(normalize_slice(lf_up[:, :, sz]))
         inp = np.stack(slices, axis=0).astype(np.float32)  # (5, H, W)
         all_inputs.append(inp)
 

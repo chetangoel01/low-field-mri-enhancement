@@ -13,6 +13,8 @@ data:
 model:
   base_features: 64                    # encoder start channels (64 generalized better than 96)
   # Encoder: 64 -> 128 -> 256 -> 512, Bottleneck: 1024
+  attention: "none"                    # options: "none", "se"
+  se_reduction: 16                     # channel reduction ratio for SE attention
 
 training:
   epochs: 400
